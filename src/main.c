@@ -6,6 +6,7 @@
 #include <SDL.h>
 #ifdef _WIN32
 #include "platform/win32/volume_control.h"
+#include <windows.h>
 #include <direct.h>
 #else
 #include <sys/stat.h>
@@ -42,6 +43,10 @@ static void OpenOneGamepad(int i);
 static void HandleVolumeAdjustment(int volume_adjustment);
 static void LoadAssets();
 static void SwitchDirectory();
+#ifdef _WIN32
+static void InitTolkAccessibility();
+static void ShutdownTolkAccessibility();
+#endif
 
 enum {
   kDefaultFullscreen = 0,
@@ -67,6 +72,50 @@ static int g_sdl_audio_mixer_volume = SDL_MIX_MAXVOLUME;
 static struct RendererFuncs g_renderer_funcs;
 static uint32 g_gamepad_modifiers;
 static uint16 g_gamepad_last_cmd[kGamepadBtn_Count];
+
+#ifdef _WIN32
+typedef void (__cdecl *Tolk_LoadFn)(void);
+typedef bool (__cdecl *Tolk_OutputFn)(const wchar_t *str, bool interrupt);
+typedef void (__cdecl *Tolk_UnloadFn)(void);
+typedef void (__cdecl *Tolk_TrySAPIFn)(bool trySAPI);
+
+static HMODULE g_tolk_module;
+static Tolk_UnloadFn g_tolk_unload;
+
+static void InitTolkAccessibility() {
+  g_tolk_module = LoadLibraryA("Tolk.dll");
+  if (!g_tolk_module)
+    return;
+
+  Tolk_LoadFn tolk_load = (Tolk_LoadFn)GetProcAddress(g_tolk_module, "Tolk_Load");
+  Tolk_OutputFn tolk_output = (Tolk_OutputFn)GetProcAddress(g_tolk_module, "Tolk_Output");
+  Tolk_TrySAPIFn tolk_try_sapi = (Tolk_TrySAPIFn)GetProcAddress(g_tolk_module, "Tolk_TrySAPI");
+  g_tolk_unload = (Tolk_UnloadFn)GetProcAddress(g_tolk_module, "Tolk_Unload");
+
+  if (tolk_load == NULL || tolk_output == NULL) {
+    if (g_tolk_unload)
+      g_tolk_unload();
+    g_tolk_unload = NULL;
+    FreeLibrary(g_tolk_module);
+    g_tolk_module = NULL;
+    return;
+  }
+
+  if (tolk_try_sapi)
+    tolk_try_sapi(true);
+  tolk_load();
+  tolk_output(L"Zelda3 accessibility patch loaded", true);
+}
+
+static void ShutdownTolkAccessibility() {
+  if (g_tolk_unload)
+    g_tolk_unload();
+  g_tolk_unload = NULL;
+  if (g_tolk_module)
+    FreeLibrary(g_tolk_module);
+  g_tolk_module = NULL;
+}
+#endif
 
 void NORETURN Die(const char *error) {
 #if defined(NDEBUG) && defined(_WIN32)
@@ -331,6 +380,9 @@ int main(int argc, char** argv) {
     printf("Failed to init SDL: %s\n", SDL_GetError());
     return 1;
   }
+#ifdef _WIN32
+  InitTolkAccessibility();
+#endif
 
   bool custom_size  = g_config.window_width != 0 && g_config.window_height != 0;
   int window_width  = custom_size ? g_config.window_width  : g_current_window_scale * g_snes_width;
@@ -510,6 +562,9 @@ int main(int argc, char** argv) {
   g_renderer_funcs.Destroy();
 
   SDL_DestroyWindow(window);
+#ifdef _WIN32
+  ShutdownTolkAccessibility();
+#endif
   SDL_Quit();
   //SaveConfigFile();
   return 0;
