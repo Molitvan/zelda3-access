@@ -85,7 +85,55 @@ static void SelectFile_NarrateFileSelectChoice() {
   Accessibility_Speak(msg, true);
 }
 
+static void NameEntry_GetTokenLabel(uint8 token, char *out, size_t out_size) {
+  if (token <= 7) {
+    snprintf(out, out_size, "%c", 'A' + token);
+  } else if (token == 9) {
+    snprintf(out, out_size, "J");
+  } else if (token >= 0xa && token <= 0x19) {
+    snprintf(out, out_size, "%c", 'A' + token);
+  } else if (token == 0x5f) {
+    snprintf(out, out_size, "I");
+  } else if (token == 0x59) {
+    snprintf(out, out_size, "Separator");
+  } else if (token == 0x3f) {
+    snprintf(out, out_size, "Dash");
+  } else if (token == 0x45) {
+    snprintf(out, out_size, "Period");
+  } else if (token == 0x46) {
+    snprintf(out, out_size, "Apostrophe");
+  } else if (token == 0x40) {
+    snprintf(out, out_size, "Jump to A row button");
+  } else if (token == 0x41) {
+    snprintf(out, out_size, "Jump to K row button");
+  } else if (token == 0x42) {
+    snprintf(out, out_size, "Jump to U row button");
+  } else if (token == 0x5a) {
+    snprintf(out, out_size, "Move left button");
+  } else if (token == 0x44) {
+    snprintf(out, out_size, "Move right button");
+  } else if (token == 0x6f) {
+    snprintf(out, out_size, "End button");
+  } else {
+    snprintf(out, out_size, "Symbol key %u", token);
+  }
+}
+
 static void SelectFile_NarrateNameEntryState() {
+  static const int8 kNameEntryTokens[128] = {
+       6,    7, 0x5f,    9, 0x59, 0x59, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x60, 0x23,
+    0x59, 0x59, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x59, 0x59, 0x59,    0,    1,    2,    3,    4,    5,
+    0x10, 0x11, 0x12, 0x13, 0x59, 0x59, 0x24, 0x5f, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d,
+    0x59, 0x59, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x59, 0x59, 0x59,  0xa,  0xb,  0xc,  0xd,  0xe,  0xf,
+    0x40, 0x41, 0x42, 0x59, 0x59, 0x59, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x40, 0x41, 0x42, 0x59,
+    0x59, 0x59, 0x61, 0x3f, 0x45, 0x46, 0x59, 0x59, 0x59, 0x59, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19,
+    0x44, 0x59, 0x6f, 0x6f, 0x59, 0x59, 0x59, 0x59, 0x59, 0x59, 0x59, 0x5a, 0x44, 0x59, 0x6f, 0x6f,
+    0x59, 0x59, 0x5a, 0x44, 0x59, 0x6f, 0x6f, 0x59, 0x59, 0x59, 0x59, 0x59, 0x59, 0x59, 0x59, 0x5a,
+  };
+  const uint8 token = kNameEntryTokens[selectfile_var3 + selectfile_var5 * 0x20];
+  char token_label[64];
+  NameEntry_GetTokenLabel(token, token_label, sizeof(token_label));
+
   SelectFile_NarrationEnterScreen(kNarrScreen_NameEntry, "Name entry");
   if (g_sf_narr.name_x == selectfile_var3 && g_sf_narr.name_y == selectfile_var5 && g_sf_narr.name_pos == selectfile_var4)
     return;
@@ -94,8 +142,7 @@ static void SelectFile_NarrateNameEntryState() {
   g_sf_narr.name_pos = selectfile_var4;
 
   char msg[96];
-  snprintf(msg, sizeof(msg), "Name cursor row %d column %d, name position %d of 6",
-           selectfile_var5 + 1, selectfile_var3 + 1, selectfile_var4 + 1);
+  snprintf(msg, sizeof(msg), "%s, name position %d of 6", token_label, selectfile_var4 + 1);
   Accessibility_Speak(msg, true);
 }
 
@@ -962,7 +1009,10 @@ void NameFile_DoTheNaming() {  // 8cda4d
       NameFile_DrawSelectedCharacter(selectfile_var4, chr);
       if (++selectfile_var4 == 6)
         selectfile_var4 = 0;
-      Accessibility_Speak("Character entered", true);
+      char label[64], msg[96];
+      NameEntry_GetTokenLabel(t, label, sizeof(label));
+      snprintf(msg, sizeof(msg), "Entered %s", label);
+      Accessibility_Speak(msg, true);
       return;
     }
   }
