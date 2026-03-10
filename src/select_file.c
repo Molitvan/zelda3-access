@@ -12,6 +12,93 @@
 #define selectfile_R18 WORD(g_ram[0xca])
 #define selectfile_R20 WORD(g_ram[0xcc])
 static const uint8 kSelectFile_Draw_Y[3] = {0x43, 0x63, 0x83};
+
+enum {
+  kNarrScreen_None = 0,
+  kNarrScreen_FileSelect,
+  kNarrScreen_CopySource,
+  kNarrScreen_CopyTarget,
+  kNarrScreen_CopyConfirm,
+  kNarrScreen_DeleteTarget,
+  kNarrScreen_DeleteConfirm,
+  kNarrScreen_NameEntry,
+};
+
+typedef struct SelectFileNarrationState {
+  int screen;
+  int sel;
+  int aux;
+  uint8 name_x;
+  uint8 name_y;
+  uint8 name_pos;
+} SelectFileNarrationState;
+
+static SelectFileNarrationState g_sf_narr = {
+  .screen = kNarrScreen_None,
+  .sel = -1,
+  .aux = -1,
+  .name_x = 0xff,
+  .name_y = 0xff,
+  .name_pos = 0xff,
+};
+
+static void SelectFile_NarrationReset() {
+  g_sf_narr.screen = kNarrScreen_None;
+  g_sf_narr.sel = -1;
+  g_sf_narr.aux = -1;
+  g_sf_narr.name_x = 0xff;
+  g_sf_narr.name_y = 0xff;
+  g_sf_narr.name_pos = 0xff;
+}
+
+static void SelectFile_NarrationEnterScreen(int screen, const char *title) {
+  if (g_sf_narr.screen == screen)
+    return;
+  SelectFile_NarrationReset();
+  g_sf_narr.screen = screen;
+  Accessibility_Speak(title, true);
+}
+
+static void SelectFile_NarrateSimpleChoice(int sel, const char *label) {
+  if (g_sf_narr.sel == sel)
+    return;
+  g_sf_narr.sel = sel;
+  Accessibility_Speak(label, true);
+}
+
+static void SelectFile_NarrateFileSelectChoice() {
+  int sel = selectfile_R16;
+  int occupied_mask = (selectfile_arr1[0] ? 1 : 0) | (selectfile_arr1[1] ? 2 : 0) | (selectfile_arr1[2] ? 4 : 0);
+  if (g_sf_narr.sel == sel && g_sf_narr.aux == occupied_mask)
+    return;
+  g_sf_narr.sel = sel;
+  g_sf_narr.aux = occupied_mask;
+
+  char msg[96];
+  if (sel < 3) {
+    snprintf(msg, sizeof(msg), "File slot %d, %s", sel + 1, (occupied_mask & (1 << sel)) ? "occupied" : "empty");
+  } else if (sel == 3) {
+    snprintf(msg, sizeof(msg), "Copy player file");
+  } else {
+    snprintf(msg, sizeof(msg), "Delete player file");
+  }
+  Accessibility_Speak(msg, true);
+}
+
+static void SelectFile_NarrateNameEntryState() {
+  SelectFile_NarrationEnterScreen(kNarrScreen_NameEntry, "Name entry");
+  if (g_sf_narr.name_x == selectfile_var3 && g_sf_narr.name_y == selectfile_var5 && g_sf_narr.name_pos == selectfile_var4)
+    return;
+  g_sf_narr.name_x = selectfile_var3;
+  g_sf_narr.name_y = selectfile_var5;
+  g_sf_narr.name_pos = selectfile_var4;
+
+  char msg[96];
+  snprintf(msg, sizeof(msg), "Name cursor row %d column %d, name position %d of 6",
+           selectfile_var5 + 1, selectfile_var3 + 1, selectfile_var4 + 1);
+  Accessibility_Speak(msg, true);
+}
+
 bool Intro_CheckCksum(const uint8 *s) {
   const uint16 *src = (const uint16 *)s;
   uint16 sum = 0;
@@ -114,6 +201,8 @@ void SelectFile_Func17(int k) {
 
 void SelectFile_Func16() {
   static const uint8 kSelectFile_Func16_FaerieY[2] = {175, 191};
+  SelectFile_NarrationEnterScreen(kNarrScreen_DeleteConfirm, "Delete file, confirm");
+  SelectFile_NarrateSimpleChoice(selectfile_R16, (selectfile_R16 == 0) ? "Yes, delete file" : "No, cancel");
   FileSelect_DrawFairy(0x1c, kSelectFile_Func16_FaerieY[selectfile_R16]);
 
   int k = selectfile_R16;
@@ -205,6 +294,7 @@ void Module01_FileSelect() {  // 8ccd7d
 }
 
 void Module_SelectFile_0() {  // 8ccd9d
+  SelectFile_NarrationReset();
   EnableForceBlank();
   is_nmi_thread_active = 0;
   nmi_flag_update_polyhedral = 0;
@@ -325,6 +415,8 @@ void FileSelect_Main() {  // 8ccebd
 
   FileSelect_DrawFairy(0x1c, kSelectFile_Faerie_Y[selectfile_R16]);
   nmi_load_bg_from_vram = 1;
+  SelectFile_NarrationEnterScreen(kNarrScreen_FileSelect, "File select");
+  SelectFile_NarrateFileSelectChoice();
 
   uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
   if (a & 0x2c) {
@@ -453,6 +545,14 @@ void CopyFile_SelectionAndBlinker() {  // 8cd13f
     }
   }
   FileSelect_DrawFairy(kCopyFile_SelectionAndBlinker_FaerieX[selectfile_R16], kCopyFile_SelectionAndBlinker_FaerieY[selectfile_R16]);
+  SelectFile_NarrationEnterScreen(kNarrScreen_CopySource, "Copy file, choose source");
+  if (selectfile_R16 == 3) {
+    SelectFile_NarrateSimpleChoice(selectfile_R16, "Cancel");
+  } else {
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Source file slot %d", selectfile_R16 + 1);
+    SelectFile_NarrateSimpleChoice(selectfile_R16, msg);
+  }
 
   uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
   if (a & 0x2c) {
@@ -492,6 +592,7 @@ void CopyFile_SelectionAndBlinker() {  // 8cd13f
 }
 
 void ReturnToFileSelect() {  // 8cd22d
+  SelectFile_NarrationReset();
   main_module_index = 1;
   submodule_index = 1;
   subsubmodule_index = 0;
@@ -553,6 +654,15 @@ void CopyFile_TargetSelectionAndBlink() {  // 8cd27b
   vram_upload_offset = 132;
 
   FileSelect_DrawFairy(kCopyFile_TargetSelectionAndBlink_FaerieX[selectfile_R16], kCopyFile_TargetSelectionAndBlink_FaerieY[selectfile_R16]);
+  SelectFile_NarrationEnterScreen(kNarrScreen_CopyTarget, "Copy file, choose target");
+  if (selectfile_R16 == 2) {
+    SelectFile_NarrateSimpleChoice(selectfile_R16, "Cancel");
+  } else {
+    int slot = selectfile_arr2[selectfile_R16] / 2 + 1;
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Target file slot %d", slot);
+    SelectFile_NarrateSimpleChoice(selectfile_R16, msg);
+  }
 
   uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
   if (a & 0x2c) {
@@ -587,6 +697,8 @@ void CopyFile_TargetSelectionAndBlink() {  // 8cd27b
 
 void CopyFile_HandleConfirmation() {  // 8cd371
   static const uint8 kCopyFile_HandleConfirmation_FaerieY[2] = {0xaf, 0xbf};
+  SelectFile_NarrationEnterScreen(kNarrScreen_CopyConfirm, "Copy file, confirm");
+  SelectFile_NarrateSimpleChoice(selectfile_R16, (selectfile_R16 == 0) ? "Yes" : "No");
   FileSelect_DrawFairy(0x1c, kCopyFile_HandleConfirmation_FaerieY[selectfile_R16]);
 
   uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
@@ -680,6 +792,14 @@ void KILLFile_ChooseTarget() {  // 8cd4ba
   }
 
   FileSelect_DrawFairy(kKILLFile_ChooseTarget_FaerieX[selectfile_R16], kKILLFile_ChooseTarget_FaerieY[selectfile_R16]);
+  SelectFile_NarrationEnterScreen(kNarrScreen_DeleteTarget, "Delete file, choose slot");
+  if (selectfile_R16 == 3) {
+    SelectFile_NarrateSimpleChoice(selectfile_R16, "Cancel");
+  } else {
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Delete file slot %d", selectfile_R16 + 1);
+    SelectFile_NarrateSimpleChoice(selectfile_R16, msg);
+  }
 
   int k = selectfile_R16;
   if (filtered_joypad_H & 0x2c) {
@@ -773,6 +893,8 @@ void NameFile_DoTheNaming() {  // 8cda4d
     0x44, 0x59, 0x6f, 0x6f, 0x59, 0x59, 0x59, 0x59, 0x59, 0x59, 0x59, 0x5a, 0x44, 0x59, 0x6f, 0x6f,
     0x59, 0x59, 0x5a, 0x44, 0x59, 0x6f, 0x6f, 0x59, 0x59, 0x59, 0x59, 0x59, 0x59, 0x59, 0x59, 0x5a,
   };
+  SelectFile_NarrateNameEntryState();
+
   for (;;) {
     int j = selectfile_var9;
     if (j == 0) {
@@ -840,6 +962,7 @@ void NameFile_DoTheNaming() {  // 8cda4d
       NameFile_DrawSelectedCharacter(selectfile_var4, chr);
       if (++selectfile_var4 == 6)
         selectfile_var4 = 0;
+      Accessibility_Speak("Character entered", true);
       return;
     }
   }
@@ -868,6 +991,7 @@ void NameFile_DoTheNaming() {  // 8cda4d
   memcpy(sram + 0x340, kSramInit_Normal, 60);
   Intro_FixCksum(sram);
   ZeldaWriteSram();
+  Accessibility_Speak("Name accepted", true);
   ReturnToFileSelect();
   irq_flag = 0xff;
   sound_effect_1 = 0x2c;

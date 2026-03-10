@@ -81,6 +81,19 @@ typedef void (__cdecl *Tolk_TrySAPIFn)(bool trySAPI);
 
 static HMODULE g_tolk_module;
 static Tolk_UnloadFn g_tolk_unload;
+static Tolk_OutputFn g_tolk_output;
+
+void Accessibility_Speak(const char *text, bool interrupt) {
+  if (!g_tolk_output || !text || !text[0])
+    return;
+
+  wchar_t wbuf[512];
+  int n = MultiByteToWideChar(CP_UTF8, 0, text, -1, wbuf, (int)(sizeof(wbuf) / sizeof(wbuf[0])));
+  if (n <= 0)
+    n = MultiByteToWideChar(CP_ACP, 0, text, -1, wbuf, (int)(sizeof(wbuf) / sizeof(wbuf[0])));
+  if (n > 0)
+    g_tolk_output(wbuf, interrupt);
+}
 
 static void InitTolkAccessibility() {
   g_tolk_module = LoadLibraryA("Tolk.dll");
@@ -88,13 +101,14 @@ static void InitTolkAccessibility() {
     return;
 
   Tolk_LoadFn tolk_load = (Tolk_LoadFn)GetProcAddress(g_tolk_module, "Tolk_Load");
-  Tolk_OutputFn tolk_output = (Tolk_OutputFn)GetProcAddress(g_tolk_module, "Tolk_Output");
+  g_tolk_output = (Tolk_OutputFn)GetProcAddress(g_tolk_module, "Tolk_Output");
   Tolk_TrySAPIFn tolk_try_sapi = (Tolk_TrySAPIFn)GetProcAddress(g_tolk_module, "Tolk_TrySAPI");
   g_tolk_unload = (Tolk_UnloadFn)GetProcAddress(g_tolk_module, "Tolk_Unload");
 
-  if (tolk_load == NULL || tolk_output == NULL) {
+  if (tolk_load == NULL || g_tolk_output == NULL) {
     if (g_tolk_unload)
       g_tolk_unload();
+    g_tolk_output = NULL;
     g_tolk_unload = NULL;
     FreeLibrary(g_tolk_module);
     g_tolk_module = NULL;
@@ -104,16 +118,23 @@ static void InitTolkAccessibility() {
   if (tolk_try_sapi)
     tolk_try_sapi(true);
   tolk_load();
-  tolk_output(L"Zelda3 accessibility patch loaded", true);
+  Accessibility_Speak("Zelda3 accessibility patch loaded", true);
 }
 
 static void ShutdownTolkAccessibility() {
   if (g_tolk_unload)
     g_tolk_unload();
+  g_tolk_output = NULL;
   g_tolk_unload = NULL;
   if (g_tolk_module)
     FreeLibrary(g_tolk_module);
   g_tolk_module = NULL;
+}
+#endif
+#ifndef _WIN32
+void Accessibility_Speak(const char *text, bool interrupt) {
+  (void)text;
+  (void)interrupt;
 }
 #endif
 

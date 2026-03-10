@@ -56,6 +56,7 @@ bool ZeldaIsPlayingMusicTrack(uint8 track);
 uint8 ZeldaGetEntranceMusicTrack(int track);
 void ZeldaSetLanguage(const char *language);
 void PatchCommand(char cmd);
+void Accessibility_Speak(const char *text, bool interrupt);
 
 // Things for state management
 
