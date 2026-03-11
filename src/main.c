@@ -25,6 +25,7 @@
 #include "config.h"
 #include "assets.h"
 #include "load_gfx.h"
+#include "tile_detect.h"
 #include "util.h"
 #include "audio.h"
 
@@ -43,6 +44,12 @@ static void OpenOneGamepad(int i);
 static void HandleVolumeAdjustment(int volume_adjustment);
 static void LoadAssets();
 static void SwitchDirectory();
+static bool Accessibility_IsGameplayModuleActive(void);
+static void Accessibility_SnapTileCursorToLink(void);
+static uint8 Accessibility_GetTileAttrAtCursor(void);
+static const char *Accessibility_GetTileAttrLabel(uint8 tile_attr);
+static void Accessibility_SpeakTileUnderCursor(const char *state_prefix, bool high_priority);
+static void Accessibility_SpeakWithPriority(const char *text, bool high_priority);
 #ifdef _WIN32
 static void InitTolkAccessibility();
 static void ShutdownTolkAccessibility();
@@ -72,16 +79,20 @@ static int g_sdl_audio_mixer_volume = SDL_MIX_MAXVOLUME;
 static struct RendererFuncs g_renderer_funcs;
 static uint32 g_gamepad_modifiers;
 static uint16 g_gamepad_last_cmd[kGamepadBtn_Count];
+static bool g_tile_cursor_locked = true;
+static uint16 g_tile_cursor_x, g_tile_cursor_y;
 
 #ifdef _WIN32
 typedef void (__cdecl *Tolk_LoadFn)(void);
 typedef bool (__cdecl *Tolk_OutputFn)(const wchar_t *str, bool interrupt);
 typedef void (__cdecl *Tolk_UnloadFn)(void);
 typedef void (__cdecl *Tolk_TrySAPIFn)(bool trySAPI);
+typedef bool (__cdecl *Tolk_SilenceFn)(void);
 
 static HMODULE g_tolk_module;
 static Tolk_UnloadFn g_tolk_unload;
 static Tolk_OutputFn g_tolk_output;
+static Tolk_SilenceFn g_tolk_silence;
 
 void Accessibility_Speak(const char *text, bool interrupt) {
   if (!g_tolk_output || !text || !text[0])
@@ -102,6 +113,7 @@ static void InitTolkAccessibility() {
 
   Tolk_LoadFn tolk_load = (Tolk_LoadFn)GetProcAddress(g_tolk_module, "Tolk_Load");
   g_tolk_output = (Tolk_OutputFn)GetProcAddress(g_tolk_module, "Tolk_Output");
+  g_tolk_silence = (Tolk_SilenceFn)GetProcAddress(g_tolk_module, "Tolk_Silence");
   Tolk_TrySAPIFn tolk_try_sapi = (Tolk_TrySAPIFn)GetProcAddress(g_tolk_module, "Tolk_TrySAPI");
   g_tolk_unload = (Tolk_UnloadFn)GetProcAddress(g_tolk_module, "Tolk_Unload");
 
@@ -125,12 +137,25 @@ static void ShutdownTolkAccessibility() {
   if (g_tolk_unload)
     g_tolk_unload();
   g_tolk_output = NULL;
+  g_tolk_silence = NULL;
   g_tolk_unload = NULL;
   if (g_tolk_module)
     FreeLibrary(g_tolk_module);
   g_tolk_module = NULL;
 }
 #endif
+
+static void Accessibility_SpeakWithPriority(const char *text, bool high_priority) {
+#ifdef _WIN32
+  if (!g_tolk_output || !text || !text[0])
+    return;
+  if (high_priority && g_tolk_silence)
+    g_tolk_silence();
+  Accessibility_Speak(text, high_priority);
+#else
+  Accessibility_Speak(text, high_priority);
+#endif
+}
 #ifndef _WIN32
 void Accessibility_Speak(const char *text, bool interrupt) {
   (void)text;
@@ -533,6 +558,8 @@ int main(int argc, char** argv) {
     SDL_LockMutex(g_audio_mutex);
     bool is_replay = ZeldaRunFrame(inputs);
     SDL_UnlockMutex(g_audio_mutex);
+    if (g_tile_cursor_locked && Accessibility_IsGameplayModuleActive())
+      Accessibility_SnapTileCursorToLink();
 
     frameCtr++;
 
@@ -726,6 +753,34 @@ static void HandleCommand_Locked(uint32 j, bool pressed) {
 }
 
 static void HandleInput(int keyCode, int keyMod, bool pressed) {
+  if (pressed && Accessibility_IsGameplayModuleActive()) {
+    uint16 mask = tilemap_location_calc_mask ? tilemap_location_calc_mask : 0x1f8;
+    bool moved = false;
+    if (keyCode == SDLK_COMMA) {
+      bool was_locked = g_tile_cursor_locked;
+      g_tile_cursor_locked = true;
+      Accessibility_SnapTileCursorToLink();
+      if (!was_locked)
+        Accessibility_SpeakTileUnderCursor("Cursor locked", true);
+    }
+    if (keyCode == SDLK_UP || keyCode == SDLK_DOWN || keyCode == SDLK_LEFT || keyCode == SDLK_RIGHT) {
+      if (g_tile_cursor_locked) {
+        Accessibility_SnapTileCursorToLink();
+        g_tile_cursor_locked = false;
+        Accessibility_SpeakTileUnderCursor("Cursor unlocked", true);
+      }
+      switch (keyCode) {
+      case SDLK_UP: g_tile_cursor_y = (g_tile_cursor_y - 8) & mask; moved = true; break;
+      case SDLK_DOWN: g_tile_cursor_y = (g_tile_cursor_y + 8) & mask; moved = true; break;
+      case SDLK_LEFT: g_tile_cursor_x = (g_tile_cursor_x - 8) & mask; moved = true; break;
+      case SDLK_RIGHT: g_tile_cursor_x = (g_tile_cursor_x + 8) & mask; moved = true; break;
+      default: break;
+      }
+      if (moved)
+        Accessibility_SpeakTileUnderCursor(NULL, false);
+    }
+  }
+
   int j = FindCmdForSdlKey(keyCode, keyMod);
   if (j != 0)
     HandleCommand(j, pressed);
@@ -780,6 +835,140 @@ static void HandleVolumeAdjustment(int volume_adjustment) {
   g_sdl_audio_mixer_volume = IntMin(IntMax(0, g_sdl_audio_mixer_volume + volume_adjustment * (SDL_MIX_MAXVOLUME >> 4)), SDL_MIX_MAXVOLUME);
   printf("[SDL mixer volume]=%i\n", g_sdl_audio_mixer_volume);
 #endif
+}
+
+static bool Accessibility_IsGameplayModuleActive(void) {
+  if (submodule_index != 0)
+    return false;
+  return main_module_index == 7 || main_module_index == 9 || main_module_index == 11;
+}
+
+static void Accessibility_SnapTileCursorToLink(void) {
+  uint16 mask = tilemap_location_calc_mask ? tilemap_location_calc_mask : 0x1f8;
+  g_tile_cursor_x = link_x_coord & mask;
+  g_tile_cursor_y = link_y_coord & mask;
+}
+
+static uint8 Accessibility_GetTileAttrAtCursor(void) {
+  uint16 mask = tilemap_location_calc_mask ? tilemap_location_calc_mask : 0x1f8;
+  uint16 x = (g_tile_cursor_x & mask) >> 3;
+  uint16 y = g_tile_cursor_y & mask;
+
+  if (!player_is_indoors)
+    return Overworld_GetTileAttributeAtLocation(x, y);
+
+  uint16 offs = (y & ~7) * 8 + (x & 63) + (link_is_on_lower_level ? 0x1000 : 0);
+  return dung_bg2_attr_table[offs];
+}
+
+static const char *Accessibility_GetTileAttrLabel(uint8 tile_attr) {
+  switch (tile_attr) {
+  case 0x08:
+  case 0x0b:
+    return "Deep water";
+  case 0x09:
+    return "Shallow water";
+  case 0x20:
+  case 0xb0: case 0xb1: case 0xb2: case 0xb3: case 0xb4: case 0xb5: case 0xb6: case 0xb7:
+  case 0xb8: case 0xb9: case 0xba: case 0xbb: case 0xbc: case 0xbd:
+    return "Pit";
+  case 0x40:
+  case 0x04:
+    return "Grass";
+  case 0x44:
+  case 0x0d:
+    return "Spikes";
+  case 0x0e:
+  case 0x0f:
+    return "Ice";
+  case 0x1d: case 0x1e: case 0x1f:
+  case 0x22: case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35: case 0x36: case 0x37:
+  case 0x3d: case 0x3e: case 0x3f:
+    return "Stairs";
+  case 0x28: case 0x29: case 0x2a: case 0x2b: case 0x2c: case 0x2d: case 0x2e: case 0x2f:
+    return "Ledge";
+  case 0x4b:
+    return "Warp tile";
+  case 0x58: case 0x59: case 0x5a: case 0x5b: case 0x5c: case 0x5d:
+  case 0x63:
+    return "Chest";
+  case 0x57:
+    return "Bonk rock";
+  case 0x67:
+    return "Crystal peg";
+  case 0x68:
+    return "Conveyor up";
+  case 0x69:
+    return "Conveyor down";
+  case 0x6a:
+    return "Conveyor left";
+  case 0x6b:
+    return "Conveyor right";
+  case 0x70: case 0x71: case 0x72: case 0x73: case 0x74: case 0x75: case 0x76: case 0x77:
+  case 0x78: case 0x79: case 0x7a: case 0x7b: case 0x7c: case 0x7d: case 0x7e: case 0x7f:
+  case 0x80: case 0x81: case 0x82: case 0x83: case 0x84: case 0x85: case 0x86: case 0x87:
+  case 0x88: case 0x89: case 0x8a: case 0x8b: case 0x8c: case 0x8d: case 0x8e: case 0x8f:
+  case 0x90: case 0x91: case 0x92: case 0x93: case 0x94: case 0x95: case 0x96: case 0x97:
+  case 0x98: case 0x99: case 0x9a: case 0x9b: case 0x9c: case 0x9d: case 0x9e: case 0x9f:
+  case 0xa0: case 0xa1: case 0xa2: case 0xa3: case 0xa4: case 0xa5:
+    return "Door or barrier";
+  case 0x27:
+    return "Hookshot target";
+  case 0x42:
+    return "Gravestone";
+  case 0x50: case 0x51: case 0x52: case 0x53: case 0x54: case 0x55: case 0x56:
+    return "Liftable object";
+  case 0xc0: case 0xc1: case 0xc2: case 0xc3: case 0xc4: case 0xc5: case 0xc6: case 0xc7:
+  case 0xc8: case 0xc9: case 0xca: case 0xcb: case 0xcc: case 0xcd: case 0xce: case 0xcf:
+    return "Torch";
+  default:
+    break;
+  }
+
+  switch (tile_attr) {
+  case 0x01: case 0x02: case 0x03: case 0x26: case 0x43:
+    return "Wall";
+  case 0x10: case 0x11: case 0x12: case 0x13:
+  case 0x18: case 0x19: case 0x1a: case 0x1b:
+    return "Slope";
+  default:
+    return "Floor";
+  }
+}
+
+static void Accessibility_SpeakTileUnderCursor(const char *state_prefix, bool high_priority) {
+  uint8 tile_attr = Accessibility_GetTileAttrAtCursor();
+  const char *label = Accessibility_GetTileAttrLabel(tile_attr);
+  uint16 mask = tilemap_location_calc_mask ? tilemap_location_calc_mask : 0x1f8;
+  int cursor_tx = (g_tile_cursor_x & mask) >> 3;
+  int cursor_ty = (g_tile_cursor_y & mask) >> 3;
+  int link_tx = (link_x_coord & mask) >> 3;
+  int link_ty = (link_y_coord & mask) >> 3;
+  int dx = cursor_tx - link_tx;
+  int dy = cursor_ty - link_ty;
+
+  char rel[64];
+  rel[0] = 0;
+  if (dx < 0) {
+    snprintf(rel + strlen(rel), sizeof(rel) - strlen(rel), "%d left", -dx);
+  } else if (dx > 0) {
+    snprintf(rel + strlen(rel), sizeof(rel) - strlen(rel), "%d right", dx);
+  }
+  if (dy < 0) {
+    snprintf(rel + strlen(rel), sizeof(rel) - strlen(rel), "%s%d up", rel[0] ? ", " : "", -dy);
+  } else if (dy > 0) {
+    snprintf(rel + strlen(rel), sizeof(rel) - strlen(rel), "%s%d down", rel[0] ? ", " : "", dy);
+  }
+  if (!rel[0])
+    strcpy(rel, "here");
+
+  char msg[160];
+  if (state_prefix && state_prefix[0]) {
+    snprintf(msg, sizeof(msg), "%s. %s: %s", state_prefix, label, rel);
+  } else {
+    snprintf(msg, sizeof(msg), "%s: %s", label, rel);
+  }
+  Accessibility_SpeakWithPriority(msg, high_priority);
 }
 
 // Approximates atan2(y, x) normalized to the [0,4) range
