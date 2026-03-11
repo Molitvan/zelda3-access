@@ -1,3 +1,11 @@
+# Zelda3 Access
+## About the fork
+The goal of this fork is to add blind accessibility to the zelda3 project. This is just an early prototype for now and is nowhere near finished. See the original README below for how to play.
+
+## Join the Discord
+For any questions or discussions, the best place is [this project's dedicated channel on the Accessibility Disco Discord server](https://go.molitvan.me/Zelda3AccessDiscord)
+
+# Original project's README
 # Zelda3
 A reimplementation of Zelda 3.
 
@@ -34,7 +42,9 @@ Switching current item with L/R keys.
 
 ## How to Play:
 
-Option 1: Launcher by RadzPrower (windows only) https://github.com/ajohns6/Zelda-3-Launcher
+~~Option 1: Launcher by RadzPrower (windows only) https://github.com/ajohns6/Zelda-3-Launcher~~
+
+Note from Molitvan: the launcher doesn't work for the accessibility patch. You have to go with the second option of building it yourself.
 
 Option 2: Building it yourself
 
