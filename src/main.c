@@ -50,6 +50,7 @@ static uint8 Accessibility_GetTileAttrAtCursor(void);
 static const char *Accessibility_GetTileAttrLabel(uint8 tile_attr);
 static void Accessibility_SpeakTileUnderCursor(const char *state_prefix, bool high_priority);
 static void Accessibility_SpeakWithPriority(const char *text, bool high_priority);
+static void Accessibility_SpeakCoordinates(bool player_coords);
 #ifdef _WIN32
 static void InitTolkAccessibility();
 static void ShutdownTolkAccessibility();
@@ -756,6 +757,9 @@ static void HandleInput(int keyCode, int keyMod, bool pressed) {
   if (pressed && Accessibility_IsGameplayModuleActive()) {
     uint16 mask = tilemap_location_calc_mask ? tilemap_location_calc_mask : 0x1f8;
     bool moved = false;
+    if (keyCode == SDLK_PERIOD || keyCode == SDLK_KP_PERIOD) {
+      Accessibility_SpeakCoordinates((keyMod & KMOD_SHIFT) != 0);
+    }
     if (keyCode == SDLK_COMMA) {
       bool was_locked = g_tile_cursor_locked;
       g_tile_cursor_locked = true;
@@ -969,6 +973,15 @@ static void Accessibility_SpeakTileUnderCursor(const char *state_prefix, bool hi
     snprintf(msg, sizeof(msg), "%s: %s", label, rel);
   }
   Accessibility_SpeakWithPriority(msg, high_priority);
+}
+
+static void Accessibility_SpeakCoordinates(bool player_coords) {
+  uint16 mask = tilemap_location_calc_mask ? tilemap_location_calc_mask : 0x1f8;
+  uint16 x = player_coords ? (link_x_coord & mask) : (g_tile_cursor_x & mask);
+  uint16 y = player_coords ? (link_y_coord & mask) : (g_tile_cursor_y & mask);
+  char msg[96];
+  snprintf(msg, sizeof(msg), "X %u, Y %u, %s coordinates", x, y, player_coords ? "player" : "cursor");
+  Accessibility_SpeakWithPriority(msg, true);
 }
 
 // Approximates atan2(y, x) normalized to the [0,4) range
