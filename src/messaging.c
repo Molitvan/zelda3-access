@@ -2261,6 +2261,173 @@ uint32 Text_DecodeCmd(uint8 a, const uint8 *src) {
   }
 }
 
+enum {
+  kDialogueAccessibilityTextMax = 1024,
+  kDialogueAccessibilityCommandBufferMax = 0xDC0,
+};
+
+static uint16 dialogue_accessibility_msg_index;
+static uint16 dialogue_accessibility_part_start;
+static bool dialogue_accessibility_part_spoken;
+
+static void DialogueAccessibility_ResetState() {
+  dialogue_accessibility_msg_index = dialogue_message_index;
+  dialogue_accessibility_part_start = 0;
+  dialogue_accessibility_part_spoken = false;
+}
+
+static bool DialogueAccessibility_IsWhitespace(char c) {
+  return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+static void DialogueAccessibility_AppendChar(char *dst, size_t dst_size, size_t *dst_len, char c) {
+  if (*dst_len + 1 >= dst_size)
+    return;
+  dst[(*dst_len)++] = c;
+  dst[*dst_len] = 0;
+}
+
+static void DialogueAccessibility_AppendText(char *dst, size_t dst_size, size_t *dst_len, const char *text) {
+  for (const char *s = text; *s; s++)
+    DialogueAccessibility_AppendChar(dst, dst_size, dst_len, *s);
+}
+
+static void DialogueAccessibility_DecodeCharToken(uint8 c, char *dst, size_t dst_size, size_t *dst_len) {
+  if (c < 26) {
+    DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'A' + c);
+    return;
+  }
+  if (c < 52) {
+    DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'a' + c - 26);
+    return;
+  }
+  if (c < 62) {
+    DialogueAccessibility_AppendChar(dst, dst_size, dst_len, '0' + c - 52);
+    return;
+  }
+  switch (c) {
+  case 62: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, '!'); return;
+  case 63: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, '?'); return;
+  case 64: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, '-'); return;
+  case 65: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, '.'); return;
+  case 66: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, ','); return;
+  case 67: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "..."); return;
+  case 68: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, '>'); return;
+  case 69: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, '('); return;
+  case 70: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, ')'); return;
+  case 71: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "ankh"); return;
+  case 72: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "waves"); return;
+  case 73: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "snake"); return;
+  case 74: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "left"); return;
+  case 75: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "right"); return;
+  case 76: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, '"'); return;
+  case 77: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "up"); return;
+  case 78: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "down"); return;
+  case 79: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "left"); return;
+  case 80: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "right"); return;
+  case 81: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, '\''); return;
+  case 82: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "heart"); return;
+  case 83: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "heart"); return;
+  case 84: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "two hearts"); return;
+  case 85: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "three hearts"); return;
+  case 86: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "three hearts"); return;
+  case 87: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "four hearts"); return;
+  case 88: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "four hearts"); return;
+  case 89: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, ' '); return;
+  case 90: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, '<'); return;
+  case 91: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "A button"); return;
+  case 92: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "B button"); return;
+  case 93: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "X button"); return;
+  case 94: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "Y button"); return;
+  case 95: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'u'); return;
+  case 96: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 's'); return;
+  case 97: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, ':'); return;
+  case 98: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "down"); return;
+  case 99: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "down"); return;
+  case 100: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "right"); return;
+  case 101: DialogueAccessibility_AppendText(dst, dst_size, dst_len, "right"); return;
+  case 102: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'e'); return;
+  case 103: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'e'); return;
+  case 104: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'e'); return;
+  case 105: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'a'); return;
+  case 106: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'u'); return;
+  case 107: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'c'); return;
+  case 108: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'a'); return;
+  case 109: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'o'); return;
+  case 110: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'u'); return;
+  case 111: DialogueAccessibility_AppendChar(dst, dst_size, dst_len, 'a'); return;
+  default:
+    return;
+  }
+}
+
+static void DialogueAccessibility_NormalizeText(const char *src, char *dst, size_t dst_size) {
+  size_t out = 0;
+  bool pending_space = false;
+  while (*src && out + 1 < dst_size) {
+    char c = *src++;
+    if (DialogueAccessibility_IsWhitespace(c)) {
+      pending_space = true;
+      continue;
+    }
+    if (pending_space && out > 0 && out + 1 < dst_size)
+      dst[out++] = ' ';
+    pending_space = false;
+    dst[out++] = c;
+  }
+  dst[out] = 0;
+}
+
+static bool DialogueAccessibility_BuildCurrentPartText(char *out_text, size_t out_size) {
+  char raw[kDialogueAccessibilityTextMax];
+  size_t raw_len = 0;
+  uint16 pos = dialogue_accessibility_part_start;
+
+  raw[0] = 0;
+  while (pos < kDialogueAccessibilityCommandBufferMax) {
+    uint32 cmd = Text_DecodeCmd(messaging_text_buffer[pos], &messaging_text_buffer[pos + 1]);
+    int cmd_type = TEXTCMD_CMD(cmd);
+    if (cmd_type == kTextCmd_Waitkey || cmd_type == kTextCmd_EndMessage)
+      break;
+
+    if (cmd_type == kTextCmd_IsLetter) {
+      DialogueAccessibility_DecodeCharToken(TEXTCMD_PARAM(cmd), raw, sizeof(raw), &raw_len);
+    } else if (cmd_type == kTextCmd_1 || cmd_type == kTextCmd_2 || cmd_type == kTextCmd_3 || cmd_type == kTextCmd_Scroll) {
+      DialogueAccessibility_AppendChar(raw, sizeof(raw), &raw_len, ' ');
+    }
+
+    pos += 1 + TEXTCMD_MULTIBYTE(cmd);
+  }
+
+  DialogueAccessibility_NormalizeText(raw, out_text, out_size);
+  return out_text[0] != 0;
+}
+
+static const char *DialogueAccessibility_GetSpeakerName(void) {
+  return (main_module_index == 20) ? "Narrator" : "NPC";
+}
+
+static void DialogueAccessibility_MaybeSpeakCurrentPart(void) {
+  if (dialogue_accessibility_msg_index != dialogue_message_index) {
+    DialogueAccessibility_ResetState();
+  } else if (dialogue_msg_read_pos < dialogue_accessibility_part_start) {
+    dialogue_accessibility_part_start = dialogue_msg_read_pos;
+    dialogue_accessibility_part_spoken = false;
+  }
+
+  if (dialogue_accessibility_part_spoken)
+    return;
+
+  char part_text[kDialogueAccessibilityTextMax];
+  if (!DialogueAccessibility_BuildCurrentPartText(part_text, sizeof(part_text)))
+    return;
+
+  char spoken_line[kDialogueAccessibilityTextMax + 64];
+  snprintf(spoken_line, sizeof(spoken_line), "%s says: %s", DialogueAccessibility_GetSpeakerName(), part_text);
+  Accessibility_Speak(spoken_line, true);
+  dialogue_accessibility_part_spoken = true;
+}
+
 // Perform initial parsing of the string, expanding words, processing some commands, etc.
 void Text_LoadCharacterBuffer() {  // 8ec4e2
   MemBlk dictionary = FindIndexInMemblk(g_zenv.dialogue_blk, 0);
@@ -2307,6 +2474,7 @@ void Text_LoadCharacterBuffer() {  // 8ec4e2
   }
   *dst = 0x7f;
   dialogue_msg_read_pos = 0;
+  DialogueAccessibility_ResetState();
 }
 
 uint8 *Text_WritePlayerName(uint8 *p) {  // 8ec5b3
@@ -2381,6 +2549,7 @@ void RenderText_Draw_CharacterTilemap() {  // 8ec97d
 }
 
 void RenderText_Draw_MessageCharacters() {  // 8ec984
+  DialogueAccessibility_MaybeSpeakCurrentPart();
 RESTART:;
   uint32 cmd = Text_DecodeCmd(messaging_text_buffer[dialogue_msg_read_pos],
       &messaging_text_buffer[dialogue_msg_read_pos + 1]);
@@ -2491,6 +2660,11 @@ RESTART:;
   }
   if (0) COMMAND_DONE: {
     dialogue_msg_read_pos += 1 + TEXTCMD_MULTIBYTE(cmd);
+    if (TEXTCMD_CMD(cmd) == kTextCmd_Waitkey) {
+      dialogue_accessibility_part_start = dialogue_msg_read_pos;
+      dialogue_accessibility_part_spoken = false;
+      DialogueAccessibility_MaybeSpeakCurrentPart();
+    }
   }
   nmi_subroutine_index = 2;
   nmi_disable_core_updates = 2;
